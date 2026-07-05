@@ -1,0 +1,13 @@
+{
+  "name": "@covenant/adapters",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "description": "Country data adapters behind the CountryAdapter interface. Peru (SMV / NIIF / PEN) is the first implementation.",
+  "dependencies": {
+    "@covenant/core": "*",
+    "pdf-parse": "^1.1.1"
+  }
+}

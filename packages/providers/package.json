@@ -1,0 +1,12 @@
+{
+  "name": "@covenant/providers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "description": "Inference and retrieval providers (Vultr Serverless Inference client, VultronRetriever, lexical fallback).",
+  "dependencies": {
+    "@covenant/core": "*"
+  }
+}

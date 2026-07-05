@@ -1,0 +1,13 @@
+{
+  "name": "@covenant/sample-data",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "description": "Illustrative demo dataset: synthetic Peruvian financials, credit agreement, and transaction ledger. Not real data.",
+  "dependencies": {
+    "@covenant/adapters": "*",
+    "@covenant/core": "*"
+  }
+}

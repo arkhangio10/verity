@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "paths": {
+      "@covenant/core": ["./packages/core/src/index.ts"],
+      "@covenant/providers": ["./packages/providers/src/index.ts"],
+      "@covenant/agent": ["./packages/agent/src/index.ts"],
+      "@covenant/adapters": ["./packages/adapters/src/index.ts"],
+      "@covenant/sample-data": ["./packages/sample-data/src/index.ts"]
+    }
+  }
+}
