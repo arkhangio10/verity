@@ -7,6 +7,8 @@ import {
   type Retriever,
 } from '@covenant/providers';
 import { buildDemoDataset } from '@covenant/sample-data';
+import { getUploads, mergeUploads } from './uploads';
+import { assembleWorkspaceDataset, getWorkspace } from './workspace';
 
 export interface AppRuntime {
   dataset: RunDataset;
@@ -53,4 +55,39 @@ async function init(): Promise<AppRuntime> {
       embedConfigured: client.isEmbedConfigured(),
     },
   };
+}
+
+/** Dataset + retriever for a run. Three cases:
+ *  1. companyId points to a user-created workspace → assemble a real dataset
+ *     from the uploaded quarters (agent computes on the user's company);
+ *  2. base case + session uploads that only add citable documents;
+ *  3. pristine base case (common path, reuses the cached base retriever). */
+export async function getRunContext(
+  sessionId: string,
+  companyId?: string,
+): Promise<{ dataset: RunDataset; retriever: Retriever; retrieverReason: string }> {
+  const app = await getRuntime();
+
+  // Case 1: a user-created company workspace.
+  if (companyId && companyId !== 'base') {
+    const ws = getWorkspace(sessionId, companyId);
+    if (ws) {
+      const dataset = await assembleWorkspaceDataset(ws, app.dataset.asOfDate);
+      const { retriever, reason } = await selectRetriever(dataset.corpus, app.inference);
+      return {
+        dataset,
+        retriever,
+        retrieverReason: `${reason} · empresa creada por el usuario (${ws.name})`,
+      };
+    }
+  }
+
+  // Case 2: base case + citable uploads.
+  const uploads = getUploads(sessionId).filter((u) => u.status !== 'failed' && u.document);
+  if (uploads.length === 0) {
+    return { dataset: app.dataset, retriever: app.retriever, retrieverReason: app.retrieverReason };
+  }
+  const dataset = mergeUploads(app.dataset, uploads);
+  const { retriever, reason } = await selectRetriever(dataset.corpus, app.inference);
+  return { dataset, retriever, retrieverReason: `${reason} · incluye ${uploads.length} documento(s) subido(s)` };
 }

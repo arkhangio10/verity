@@ -249,25 +249,35 @@ function resolveTotalDebt(
 ): CitedComputation {
   const unit = moneyUnit(latest.currency, latest.scale);
   const period = latest.period.label;
-  const parts: { path: CanonicalFieldPath; include: boolean }[] = [
+  // Lease liabilities are optional: a company without leases simply reports
+  // none — that is a zero, not a missing input. Core borrowings stay required.
+  const parts: { path: CanonicalFieldPath; include: boolean; optional?: boolean }[] = [
     { path: 'balance.shortTermBorrowings', include: defs.debt.includeShortTermBorrowings },
     { path: 'balance.currentPortionLongTermDebt', include: defs.debt.includeCurrentPortionLongTermDebt },
     { path: 'balance.longTermDebt', include: defs.debt.includeLongTermDebt },
-    { path: 'balance.leaseLiabilitiesCurrent', include: defs.debt.includeLeaseLiabilities },
-    { path: 'balance.leaseLiabilitiesNonCurrent', include: defs.debt.includeLeaseLiabilities },
+    { path: 'balance.leaseLiabilitiesCurrent', include: defs.debt.includeLeaseLiabilities, optional: true },
+    { path: 'balance.leaseLiabilitiesNonCurrent', include: defs.debt.includeLeaseLiabilities, optional: true },
   ];
   const inputs: CitedValue[] = [];
+  const extraNotes: string[] = [];
   let total = 0;
   for (const part of parts) {
     if (!part.include) continue;
-    const v = requireCV(latest, part.path);
+    const v = part.optional ? getField(latest, part.path) : requireCV(latest, part.path);
+    if (!v) {
+      extraNotes.push(`${part.path} not reported; treated as 0`);
+      continue;
+    }
     assertSameUnit(unit, v.unit, part.path);
     total += v.value;
     inputs.push(v);
   }
-  const notes = defs.debt.includeLeaseLiabilities
-    ? ['lease liabilities (IFRS 16 / NIIF 16) included per definition']
-    : ['lease liabilities (IFRS 16 / NIIF 16) excluded per definition'];
+  const notes = [
+    defs.debt.includeLeaseLiabilities
+      ? 'lease liabilities (IFRS 16 / NIIF 16) included per definition'
+      : 'lease liabilities (IFRS 16 / NIIF 16) excluded per definition',
+    ...extraNotes,
+  ];
   return {
     kind: 'computation',
     id: `total-debt:${period}`,

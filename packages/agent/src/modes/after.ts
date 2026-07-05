@@ -22,7 +22,7 @@ import {
 } from '../compose';
 import { assessConfidence, minLevel, type ConfidenceAssessment } from '../confidence';
 import type { Planner } from '../planner';
-import type { PlanStep } from '../trace';
+import type { PlanStep, RunVerdict } from '../trace';
 import { executeTool, type ToolRegistry, type ToolServices } from '../toolkit';
 import type { CrossCheckData } from '../tools/transactionCrossChecker';
 import type { HeadroomData } from '../tools/headroomCalculator';
@@ -41,6 +41,7 @@ export interface ModeResult {
   output: ComposedOutput;
   overall: ConfidenceAssessment;
   needsHumanReview: boolean;
+  verdict?: RunVerdict;
 }
 
 function stepById(steps: PlanStep[], id: string): PlanStep {
@@ -579,5 +580,84 @@ export async function runAfterMode(
     disclaimer: PRODUCT_DISCLAIMER,
     sections,
   };
-  return { output, overall, needsHumanReview };
+
+  // ── Headline verdict (the one line a reader sees first) ─────────────────
+  const anyBreach = headrooms.some((h) => h.headroom.status === 'breach');
+  const topCause = crossCheck?.causes[0];
+  const wh2 = worst.headroom;
+  const headroomStr = formatValue(wh2.headroomPct, { kind: 'percent' });
+  let tone: RunVerdict['tone'];
+  let headline: string;
+  let detail: string;
+  let headlineKey: string;
+  let detailKey: string;
+  let actionKey: string;
+  const params: Record<string, string> = {
+    covenant: worstSpec.name,
+    company: dataset.company.name,
+    period: services.asOfQuarter,
+    headroom: headroomStr,
+  };
+  if (anyBreach) {
+    tone = 'critical';
+    headlineKey = 'v.breach.h';
+    detailKey = 'v.breach.d';
+    actionKey = 'action.breach';
+    headline = `${worstSpec.name} in breach`;
+    detail = `${dataset.company.name} is out of compliance on at least one covenant as of ${services.asOfQuarter}. Immediate lender action required.`;
+  } else if (drift?.projectedBreachPeriod) {
+    tone = drift.quartersToBreach !== null && drift.quartersToBreach <= 2 ? 'critical' : 'warning';
+    headlineKey = 'v.drift.h';
+    detailKey = 'v.drift.d';
+    actionKey = 'action.drift';
+    params.breachPeriod = drift.projectedBreachPeriod;
+    // pass only the raw cause memo; the UI wraps it with a localized "driven by".
+    params.causeText = topCause ? topCause.memo.toLowerCase() : '';
+    params.cause = topCause ? ` — driven by ${topCause.memo.toLowerCase()}` : '';
+    headline = `Covenant drifting toward breach`;
+    detail = `${worstSpec.name} is compliant today but, on the current trend, is projected to breach in ${drift.projectedBreachPeriod}${params.cause}.`;
+  } else if (wh2.status === 'tight') {
+    tone = 'warning';
+    headlineKey = 'v.tight.h';
+    detailKey = 'v.tight.d';
+    actionKey = 'action.tight';
+    headline = `Thin headroom — watch closely`;
+    detail = `${worstSpec.name} is compliant but the cushion is thin (${headroomStr}). A moderate downside could trip it.`;
+  } else {
+    tone = 'ok';
+    headlineKey = 'v.compliant.h';
+    detailKey = 'v.compliant.d';
+    actionKey = 'action.compliant';
+    headline = `All covenants compliant`;
+    detail = `Every covenant is within its threshold with adequate headroom as of ${services.asOfQuarter}.`;
+  }
+  const verdict: RunVerdict = {
+    tone,
+    headline,
+    detail,
+    headlineKey,
+    detailKey,
+    statusKey: `status.${tone}`,
+    actionKey,
+    params,
+    metrics: [
+      {
+        label: worstSpec.name.replace('Maximum ', '').replace('Minimum ', ''),
+        value: `${formatValue(wh2.actual, RATIO_UNIT)} / ${wh2.comparator === 'max' ? '≤' : '≥'} ${formatValue(wh2.threshold, RATIO_UNIT)}`,
+        tone: wh2.status === 'breach' ? 'critical' : wh2.status === 'tight' ? 'warning' : 'ok',
+      },
+      {
+        label: 'Headroom',
+        labelKey: 'm.headroom',
+        value: headroomStr,
+        tone: wh2.status === 'breach' ? 'critical' : wh2.status === 'tight' ? 'warning' : 'ok',
+      },
+      ...(drift?.projectedBreachPeriod
+        ? [{ label: 'Projected breach', labelKey: 'm.projectedBreach', value: drift.projectedBreachPeriod, tone: 'warning' as const }]
+        : []),
+      { label: 'Confidence', labelKey: 'm.confidence', value: overallLevel, tone: 'neutral' as const },
+    ],
+  };
+
+  return { output, overall, needsHumanReview, verdict };
 }

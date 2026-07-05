@@ -1,23 +1,29 @@
 import { runAgent, RunAbortedError, type TraceEvent } from '@covenant/agent';
 import { runStore } from '../../../../lib/server/runStore';
-import { getRuntime } from '../../../../lib/server/runtime';
+import { getRuntime, getRunContext } from '../../../../lib/server/runtime';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** POST /api/agent/run {mode} → text/event-stream of TraceEvents.
+/** POST /api/agent/run {mode, session} → text/event-stream of TraceEvents.
  *  The live reasoning trace is the product; this endpoint streams every
- *  plan/retrieval/tool/decision event as it happens. */
+ *  plan/retrieval/tool/decision event as it happens. The run operates over the
+ *  base case merged with any documents this session uploaded. */
 export async function POST(req: Request): Promise<Response> {
   let mode: 'before' | 'after' = 'after';
+  let sessionId = 'default';
+  let companyId: string | undefined;
   try {
-    const body = (await req.json()) as { mode?: string };
+    const body = (await req.json()) as { mode?: string; session?: string; companyId?: string };
     if (body.mode === 'before' || body.mode === 'after') mode = body.mode;
+    if (typeof body.session === 'string' && body.session) sessionId = body.session;
+    if (typeof body.companyId === 'string' && body.companyId) companyId = body.companyId;
   } catch {
     // default mode
   }
 
   const app = await getRuntime();
+  const ctx = await getRunContext(sessionId, companyId);
   const runId = crypto.randomUUID();
   runStore.create(runId, mode);
 
@@ -51,9 +57,9 @@ export async function POST(req: Request): Promise<Response> {
       void runAgent({
         mode,
         runId,
-        dataset: app.dataset,
-        retriever: app.retriever,
-        retrieverReason: app.retrieverReason,
+        dataset: ctx.dataset,
+        retriever: ctx.retriever,
+        retrieverReason: ctx.retrieverReason,
         inference: app.inference,
         loopMode: app.loopMode,
         signal: abort.signal,

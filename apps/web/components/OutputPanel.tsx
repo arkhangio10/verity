@@ -5,9 +5,12 @@ import type {
   OutputBlock,
   OutputSection,
   RunResult,
+  RunVerdict,
   Span,
 } from '@covenant/agent';
 import type { SourceRef } from '@covenant/core';
+import { useI18n } from '../lib/i18n';
+import { localizeMetricLabel, localizeVerdict } from './VerdictModal';
 
 interface OutputPanelProps {
   mode: 'before' | 'after';
@@ -35,13 +38,14 @@ export function OutputPanel({
   onCite,
   onFact,
 }: OutputPanelProps) {
+  const { t } = useI18n();
   const title =
     result?.output.title ?? (mode === 'after' ? 'Escalation memo' : 'Covenant design term sheet');
 
   return (
     <section className="panel" aria-label="Cited output">
       <div className="panel-head">
-        <span>{mode === 'after' ? 'Escalation memo' : 'Term sheet'}</span>
+        <span>{mode === 'after' ? t('panel.answer.after') : t('panel.answer.before')}</span>
         {result && (
           <span style={{ marginLeft: 'auto', textTransform: 'none', letterSpacing: 0 }}>
             <ConfidenceBadge
@@ -54,15 +58,28 @@ export function OutputPanel({
       <div className="panel-body">
         {error && <div className="review-banner">Run error: {error}</div>}
         {sections.length === 0 && !error ? (
-          <div className="empty-state">
-            {running
-              ? 'The agent is working — composed sections will appear here as they are produced.'
-              : mode === 'after'
-                ? 'Run the agent to verify every covenant, measure headroom, trace the cause of drift and produce a cited escalation memo.'
-                : 'Run the agent to analyze volatility, stress the ratios and propose a covenant package with justified, cited thresholds.'}
+          <div className="empty-state answer-empty">
+            {running ? (
+              <>
+                <div className="spinner" aria-hidden="true" />
+                <p>{t('answer.composing')}</p>
+              </>
+            ) : (
+              <>
+                <div className="empty-icon" aria-hidden="true">{mode === 'after' ? '⚖' : '✎'}</div>
+                <p className="empty-lead">
+                  {mode === 'after' ? t('empty.answer.after.lead') : t('empty.answer.before.lead')}
+                </p>
+                <p className="empty-sub">
+                  {mode === 'after' ? t('empty.answer.after.sub') : t('empty.answer.before.sub')}
+                </p>
+                <p className="empty-cue">{t('empty.press')} <b>{t('btn.run')}</b> {t('empty.cue.generate')} →</p>
+              </>
+            )}
           </div>
         ) : (
           <>
+            {result?.verdict && <VerdictBanner verdict={result.verdict} t={t} />}
             {result && (
               <div className="memo-header">
                 <h2>{title}</h2>
@@ -73,13 +90,12 @@ export function OutputPanel({
                     justification={result.overallConfidence.justification}
                   />
                   <span className="drafted-by">
-                    {result.factCount} cited facts · planner {result.planner} · {result.loopMode} loop
+                    {result.factCount} {t('memo.citedFacts')} · {t('memo.planner')} {result.planner} · {result.loopMode} {t('memo.loop')}
                   </span>
                 </div>
                 {result.needsHumanReview && (
                   <div className="review-banner" style={{ marginTop: 8 }}>
-                    ⚠ Confidence is LOW on at least one item — this output is routed to human review and
-                    must not be auto-published.
+                    {t('memo.needsReview')}
                   </div>
                 )}
               </div>
@@ -91,6 +107,7 @@ export function OutputPanel({
                 facts={facts}
                 onCite={onCite}
                 onFact={onFact}
+                t={t}
               />
             ))}
             {result && <div className="disclaimer">{result.output.disclaimer}</div>}
@@ -110,16 +127,54 @@ export function ConfidenceBadge({ level, justification }: { level: string; justi
   );
 }
 
+type T = (key: string, params?: Record<string, string | number>) => string;
+
+/** The headline conclusion — read this first, then the detail below. */
+function VerdictBanner({ verdict, t }: { verdict: RunVerdict; t: T }) {
+  const glyph = verdict.tone === 'critical' ? '▲' : verdict.tone === 'warning' ? '◆' : '✓';
+  const { headline, detail } = localizeVerdict(verdict, t);
+  const statusText = verdict.statusKey ? t(verdict.statusKey) : '';
+  const actionText = verdict.actionKey ? t(verdict.actionKey, verdict.params) : null;
+  return (
+    <div className={`verdict verdict-${verdict.tone}`}>
+      <div className="verdict-top">
+        <span className="verdict-glyph" aria-hidden="true">{glyph}</span>
+        <span className="verdict-headline">{headline}</span>
+        {statusText && <span className={`vm-badge vm-badge-${verdict.tone} verdict-status`}>{statusText}</span>}
+      </div>
+      <p className="verdict-detail">{detail}</p>
+      {verdict.metrics.length > 0 && (
+        <div className="verdict-metrics">
+          {verdict.metrics.map((m, i) => (
+            <div className={`vmetric vmetric-${m.tone ?? 'neutral'}`} key={i}>
+              <span className="vmetric-label">{localizeMetricLabel(m, t)}</span>
+              <span className="vmetric-value">{m.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {actionText && (
+        <div className={`vm-action vm-action-${verdict.tone}`} style={{ marginTop: 12 }}>
+          <div className="vm-action-label">→ {t('verdict.whatToDo')}</div>
+          <div className="vm-action-text">{actionText}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SectionView({
   section,
   facts,
   onCite,
   onFact,
+  t,
 }: {
   section: OutputSection;
   facts: Record<string, Fact>;
   onCite: (source: SourceRef) => void;
   onFact: (factId: string) => void;
+  t: T;
 }) {
   // per-section citation numbering
   const citeIndex = new Map<string, number>();
@@ -315,12 +370,14 @@ function SectionView({
     }
   };
 
+  // Section headings come from the backend in English; translate the known set.
+  const heading = t(`h.${section.heading}`);
   return (
     <div className="section" id={`section-${section.id}`}>
       <div className="section-head">
-        <h3>{section.heading}</h3>
-        {section.draftedBy === 'llm' && <span className="drafted-by">LLM-drafted · guard-verified</span>}
-        {section.needsHumanReview && <span className="status-pill breach">needs review</span>}
+        <h3>{heading === `h.${section.heading}` ? section.heading : heading}</h3>
+        {section.draftedBy === 'llm' && <span className="drafted-by">{t('draftedBy.llm')}</span>}
+        {section.needsHumanReview && <span className="status-pill breach">{t('section.needsReview')}</span>}
         {section.confidence && (
           <ConfidenceBadge level={section.confidence.level} justification={section.confidence.justification} />
         )}

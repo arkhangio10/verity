@@ -3,6 +3,7 @@
 import type { TraceEvent } from '@covenant/agent';
 import type { SourceRef } from '@covenant/core';
 import { useEffect, useRef, useState } from 'react';
+import { useI18n } from '../lib/i18n';
 
 /** LEFT panel: the live reasoning trace. Every plan, retrieval, tool call,
  *  decision and confidence assessment streams in as the agent works. */
@@ -15,6 +16,7 @@ export function TracePanel({
   running: boolean;
   onCite: (source: SourceRef) => void;
 }) {
+  const { t } = useI18n();
   const bodyRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
 
@@ -33,15 +35,17 @@ export function TracePanel({
   return (
     <section className="panel" aria-label="Agent reasoning trace">
       <div className="panel-head">
-        <span>Agent reasoning</span>
-        {running && <span className="run-dot">running</span>}
-        <span className="head-count">{events.length > 0 ? `${events.length} events` : ''}</span>
+        <span>{t('panel.trace')}</span>
+        {running && <span className="run-dot">{t('trace.running')}</span>}
+        <span className="head-count">{events.length > 0 ? `${events.length} ${t('trace.count')}` : ''}</span>
       </div>
       <div className="panel-body" ref={bodyRef} onScroll={onScroll}>
         {events.length === 0 ? (
-          <div className="empty-state">
-            Press <code>Run agent</code> to watch the plan, retrievals, tool calls and decisions stream
-            here in real time. The trace is the product — not a log.
+          <div className="empty-state trace-empty">
+            <div className="empty-icon" aria-hidden="true">◉</div>
+            <p className="empty-lead">{t('empty.trace.lead')}</p>
+            <p className="empty-sub">{t('empty.trace.sub')}</p>
+            <p className="empty-cue">{t('empty.press')} <b>{t('btn.run')}</b> {t('empty.cue.start')} →</p>
           </div>
         ) : (
           events.map((event) => <TraceItem key={event.seq} event={event} onCite={onCite} />)

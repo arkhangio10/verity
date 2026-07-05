@@ -19,7 +19,7 @@ import {
 } from '../compose';
 import { assessConfidence, minLevel, type ConfidenceAssessment } from '../confidence';
 import type { Planner } from '../planner';
-import type { PlanStep } from '../trace';
+import type { PlanStep, RunVerdict } from '../trace';
 import { executeTool, type ToolRegistry, type ToolServices } from '../toolkit';
 import type { ProposerData } from '../tools/covenantProposer';
 import type { StressData } from '../tools/stressTester';
@@ -348,5 +348,33 @@ export async function runBeforeMode(
     disclaimer: PRODUCT_DISCLAIMER,
     sections,
   };
-  return { output, overall, needsHumanReview };
+
+  // ── Headline verdict: what package was proposed and why ─────────────────
+  const leverageCov = pkg.covenants.find((c) => c.ratio === 'leverage');
+  const highVol = cov > services.policy.proposal.highVolCovCutoff;
+  const capStr = leverageCov ? `${formatValue(leverageCov.threshold, RATIO_UNIT)} maximum leverage cap` : 'covenant package';
+  const verdict: RunVerdict = {
+    tone: 'ok',
+    headline: `Covenant package proposed — ${countWord(pkg.covenants.length)} covenants`,
+    detail: `A ${capStr} sized off the worst stressed level${highVol ? ', plus a volatility cushion for seasonal earnings' : ''} — every threshold derived from the numbers, not guessed.`,
+    headlineKey: 'v.proposed.h',
+    detailKey: 'v.proposed.d',
+    statusKey: 'status.proposed',
+    actionKey: 'action.proposed',
+    params: {
+      count: String(pkg.covenants.length),
+      cap: capStr,
+      cushion: highVol ? '__CUSHION__' : '',
+    },
+    metrics: [
+      ...(leverageCov
+        ? [{ label: 'Leverage cap', labelKey: 'm.leverageCap', value: `≤ ${formatValue(leverageCov.threshold, RATIO_UNIT)}`, tone: 'ok' as const }]
+        : []),
+      { label: 'EBITDA volatility', labelKey: 'm.ebitdaVol', value: formatValue(cov, { kind: 'percent' }), tone: highVol ? 'warning' as const : 'neutral' as const },
+      { label: 'Covenants', labelKey: 'm.covenants', value: String(pkg.covenants.length), tone: 'neutral' as const },
+      { label: 'Confidence', labelKey: 'm.confidence', value: overallLevel, tone: 'neutral' as const },
+    ],
+  };
+
+  return { output, overall, needsHumanReview, verdict };
 }

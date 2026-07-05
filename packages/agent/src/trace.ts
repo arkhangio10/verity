@@ -20,6 +20,28 @@ export interface RetrievalHitSummary {
   snippet: string;
 }
 
+/** One-line, human-readable conclusion of the run — the headline a reader sees
+ *  before any detail. Derived deterministically from the analysis, never from
+ *  the LLM. `tone` drives the color; `metrics` are small pill stats. */
+export interface RunVerdict {
+  tone: 'critical' | 'warning' | 'ok';
+  /** Short verdict label, e.g. "Covenant drifting toward breach" (English fallback). */
+  headline: string;
+  /** One sentence expanding the headline (plain language, no jargon). */
+  detail: string;
+  /** Up to ~4 headline metrics for the pill row (already formatted). */
+  metrics: { label: string; value: string; labelKey?: string; tone?: 'critical' | 'warning' | 'ok' | 'neutral' }[];
+  /** i18n keys so the UI can localize the headline/detail without re-deriving.
+   *  Params are already-formatted display strings. */
+  headlineKey?: string;
+  detailKey?: string;
+  params?: Record<string, string>;
+  /** Plain-language severity for the badge ("action needed" / "watch" / "all clear"). */
+  statusKey?: string;
+  /** The recommended next step in one line — answers "what do I do now?". */
+  actionKey?: string;
+}
+
 export interface RunResult {
   output: ComposedOutput;
   overallConfidence: ConfidenceAssessment;
@@ -28,6 +50,8 @@ export interface RunResult {
   durationMs: number;
   planner: PlannerKind;
   loopMode: 'scripted' | 'model';
+  /** Headline conclusion for the UI. */
+  verdict?: RunVerdict;
 }
 
 /**

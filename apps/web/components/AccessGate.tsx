@@ -138,7 +138,9 @@ export function AccessGate({ meta }: { meta: WorkbenchMeta }) {
         EV/CS · DISPATCH 026
       </div>
       <div className="gate-corner gate-corner-r" aria-hidden="true">
-        OFFLINE · DETERMINISTIC
+        {meta.provider.configured
+          ? `VULTR · ${(meta.provider.chatModel ?? 'LIVE').toUpperCase()}`
+          : 'OFFLINE · DETERMINISTIC'}
       </div>
     </div>
   );

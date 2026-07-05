@@ -141,6 +141,7 @@ export async function runAgent(cfg: AgentRunConfig): Promise<RunResult> {
       durationMs: Date.now() - startedAt,
       planner: planner.kind,
       loopMode,
+      verdict: modeResult.verdict,
     };
     trace.emit({ type: 'run_completed', result });
     return result;

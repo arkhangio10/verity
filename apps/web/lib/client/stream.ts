@@ -6,11 +6,13 @@ export async function streamAgentRun(
   mode: 'before' | 'after',
   onEvent: (event: TraceEvent) => void,
   signal: AbortSignal,
+  sessionId = 'default',
+  companyId = 'base',
 ): Promise<void> {
   const res = await fetch('/api/agent/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({ mode, session: sessionId, companyId }),
     signal,
   });
   if (!res.ok || !res.body) {
