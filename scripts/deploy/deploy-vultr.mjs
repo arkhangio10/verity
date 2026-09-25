@@ -48,6 +48,19 @@ const TAG = 'verity-deploy';
 const API = 'https://api.vultr.com/v2';
 const CONTAINER = 'verity';
 const APP_PORT = 3000;
+const TARBALL_NAME = '.verity-src.tar.gz';
+
+// Variables que SÍ se inyectan en el contenedor de la VM (whitelist explícita).
+// VULTR_API_KEY_ACCOUNT NO está aquí a propósito: el token de cuenta nunca sale
+// de tu máquina — se usa sólo localmente para llamar a la API de Vultr.
+const APP_ENV_KEYS = [
+  'VULTR_API_KEY',
+  'VULTR_INFERENCE_BASE_URL',
+  'VULTR_CHAT_MODEL',
+  'VULTR_EMBED_MODEL',
+  'AGENT_LOOP_MODE',
+  'SMV_BASE_URL',
+];
 
 // ── carga de .env (sin dependencias, mismo parser que check-vultr) ───────────
 function loadEnvFile(path) {
@@ -63,7 +76,12 @@ function loadEnvFile(path) {
 }
 
 const appEnv = loadEnvFile(join(ROOT, '.env'));
-const deployEnv = { ...loadEnvFile(join(HERE, '.env.deploy')), ...process.env };
+// El token de cuenta (y overrides de deploy) pueden vivir en
+// scripts/deploy/.env.deploy O directamente en el .env raíz — así "todo en un
+// solo .env" funciona. Precedencia: process.env > .env.deploy > .env raíz.
+// Nota: VULTR_API_KEY_ACCOUNT NO está en la whitelist de buildRuntimeEnvFile,
+// por lo que nunca se sube a la VM; se usa solo localmente para la API de Vultr.
+const deployEnv = { ...appEnv, ...loadEnvFile(join(HERE, '.env.deploy')), ...process.env };
 
 const ACCOUNT_KEY = (deployEnv.VULTR_API_KEY_ACCOUNT || '').trim();
 const REGION = deployEnv.VULTR_REGION || 'ewr';
@@ -204,8 +222,12 @@ const SSH_OPTS = [
 ];
 
 function ssh(ip, cmd, opts = {}) {
+  // opts.input: enviar contenido por stdin (canal cifrado), NUNCA como argumento
+  // — así secretos como la API key no aparecen en `ps` ni en el historial.
+  const stdio = opts.input ? ['pipe', 'inherit', 'inherit'] : opts.quiet ? 'pipe' : 'inherit';
   return spawnSync('ssh', [...SSH_OPTS, `root@${ip}`, cmd], {
-    stdio: opts.quiet ? 'pipe' : 'inherit',
+    stdio,
+    input: opts.input,
     encoding: 'utf8',
     shell: false,
   });
@@ -226,41 +248,41 @@ async function waitForSsh(ip) {
 }
 
 // ── despliegue del contenedor ─────────────────────────────────────────────────
-function buildRuntimeEnvFlags() {
-  // Sólo las variables de la app. Se pasan a `docker run -e`, nunca a la imagen.
-  const keys = [
-    'VULTR_API_KEY',
-    'VULTR_INFERENCE_BASE_URL',
-    'VULTR_CHAT_MODEL',
-    'VULTR_EMBED_MODEL',
-    'AGENT_LOOP_MODE',
-    'SMV_BASE_URL',
-  ];
-  const flags = [];
-  for (const k of keys) {
-    if (appEnv[k] !== undefined && appEnv[k] !== '') flags.push('-e', `${k}=${appEnv[k]}`);
+function buildRuntimeEnvFile() {
+  // Sólo las variables de la app (whitelist APP_ENV_KEYS). Se escriben en un
+  // archivo bloqueado en la VM (chmod 600) y se inyectan con
+  // `docker run --env-file`, nunca en la imagen ni en la línea de comandos.
+  const lines = [];
+  for (const k of APP_ENV_KEYS) {
+    if (appEnv[k] !== undefined && appEnv[k] !== '') lines.push(`${k}=${appEnv[k]}`);
   }
-  return flags;
+  return lines.length ? lines.join('\n') + '\n' : '';
 }
 
 function packRepo() {
-  const tarball = join(HERE, '.verity-src.tar.gz');
-  log('📦 Empaquetando el repo (sin node_modules/.next/.git)…');
+  const tarball = join(HERE, TARBALL_NAME);
+  log('📦 Empaquetando el repo (sin node_modules/.next/.git/.env)…');
+  // En Windows, tar/scp interpretan "C:\…" como host remoto (sintaxis host:archivo)
+  // y fallan con "Cannot connect to C:". Lo evitamos ejecutando desde ROOT como
+  // cwd y usando SÓLO rutas relativas con forward-slash (sin drive-letter ni
+  // colon). --force-local es un seguro extra para que tar nunca asuma remoto.
   execFileSync(
     'tar',
     [
+      '--force-local',
       '--exclude=./node_modules',
       '--exclude=./.git',
       '--exclude=./apps/web/.next',
       '--exclude=./**/node_modules',
-      '--exclude=./scripts/deploy/.verity-src.tar.gz',
+      // NUNCA subir secretos: la key se inyecta aparte por un canal cifrado.
+      '--exclude=./.env',
+      '--exclude=./scripts/deploy/.env.deploy',
+      `--exclude=./scripts/deploy/${TARBALL_NAME}`,
       '-czf',
-      tarball,
-      '-C',
-      ROOT,
+      `scripts/deploy/${TARBALL_NAME}`,
       '.',
     ],
-    { stdio: 'inherit' },
+    { stdio: 'inherit', cwd: ROOT },
   );
   return tarball;
 }
@@ -272,11 +294,13 @@ async function deployTo(ip) {
     'command -v docker >/dev/null 2>&1 || (curl -fsSL https://get.docker.com | sh && systemctl enable --now docker)',
   );
 
-  const tarball = packRepo();
+  packRepo();
   log('⬆️  Subiendo el código…');
   ssh(ip, 'rm -rf /opt/verity && mkdir -p /opt/verity');
-  const scp = spawnSync('scp', [...SSH_OPTS, tarball, `root@${ip}:/opt/verity/src.tar.gz`], {
+  // cwd=HERE + nombre relativo → scp no ve el "C:" y lo trata como archivo local.
+  const scp = spawnSync('scp', [...SSH_OPTS, TARBALL_NAME, `root@${ip}:/opt/verity/src.tar.gz`], {
     stdio: 'inherit',
+    cwd: HERE,
   });
   if (scp.status !== 0) die('Falló la subida del código por scp.');
   ssh(ip, 'cd /opt/verity && tar -xzf src.tar.gz && rm src.tar.gz');
@@ -285,16 +309,26 @@ async function deployTo(ip) {
   const build = ssh(ip, 'cd /opt/verity && docker build -t verity:latest .');
   if (build.status !== 0) die('Falló el docker build en la VM.');
 
+  // Escribir las variables de la app en un archivo bloqueado (chmod 600), sin
+  // que la key pase nunca por la línea de comandos: viaja por el stdin de SSH.
+  const envFile = buildRuntimeEnvFile();
+  log('🔒 Escribiendo variables de la app en /opt/verity/app.env (chmod 600)…');
+  const writeEnv = ssh(
+    ip,
+    'umask 077 && cat > /opt/verity/app.env && chmod 600 /opt/verity/app.env',
+    { input: envFile },
+  );
+  if (writeEnv.status !== 0) die('No se pudo escribir el archivo de entorno en la VM.');
+
   log('🚀 Arrancando el contenedor…');
-  const envFlags = buildRuntimeEnvFlags();
   const runCmd = [
     'docker rm -f',
     CONTAINER,
     '2>/dev/null; docker run -d --restart unless-stopped --name',
     CONTAINER,
+    '--env-file /opt/verity/app.env',
     '-p',
     `${APP_PORT}:${APP_PORT}`,
-    ...envFlags.map((f) => (f === '-e' ? '-e' : JSON.stringify(f))),
     'verity:latest',
   ].join(' ');
   const run = ssh(ip, runCmd);
@@ -322,7 +356,7 @@ function printPlan() {
   log(`   Etiqueta       ${TAG}  (idempotente: reutiliza si ya existe)`);
   log(`   Contenedor     ${CONTAINER}  ·  puerto ${APP_PORT}`);
   log(`   Imagen         build local del Dockerfile del repo, en la VM`);
-  const appVars = Object.keys(appEnv).filter((k) => appEnv[k]);
+  const appVars = APP_ENV_KEYS.filter((k) => appEnv[k]);
   const hasInfKey = !!appEnv.VULTR_API_KEY;
   log(`   Modo IA        ${hasInfKey ? 'Vultr Serverless Inference (VULTR_API_KEY presente)' : 'OFFLINE (planner determinista + BM25)'}`);
   log(`   Vars de app    ${appVars.length ? appVars.join(', ') : '(ninguna — corre offline)'}`);
